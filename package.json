@@ -1,0 +1,12 @@
+{
+  "name": "mrbwrite",
+  "version": "1.0.0",
+  "description": "mrbwrite",
+  "main": "mrbwrite.js",
+  "scripts": {
+    "start": "node mrbwrite.js"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
+  }
+}
