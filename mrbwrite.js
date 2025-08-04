@@ -12,7 +12,7 @@ class MRBWriteSync {
         this.port = null;
         this.parser = null;
         this.isConnected = false;
-        this.responseTimeout = 5000; // 5秒のタイムアウト
+        this.responseTimeout = 1000; // 1秒のタイムアウト
     }
 
     // 同期的に接続
@@ -28,7 +28,6 @@ class MRBWriteSync {
 
             this.port.on('open', () => {
                 this.isConnected = true;
-                console.log(`シリアルポート ${this.portPath} に接続しました`);
                 resolve();
             });
 
@@ -39,7 +38,6 @@ class MRBWriteSync {
 
             this.port.on('close', () => {
                 this.isConnected = false;
-                console.log('シリアルポートが閉じられました');
             });
 
             this.port.open();
@@ -59,7 +57,6 @@ class MRBWriteSync {
                     console.error('書き込みエラー:', err.message);
                     reject(err);
                 } else {
-                    console.log('送信:', data.toString().trim());
                     resolve();
                 }
             });
@@ -95,7 +92,7 @@ class MRBWriteSync {
             const response = await this.readSync(timeout);
             return response;
         } catch (error) {
-            throw new Error(`コマンド送信失敗: ${error.message}`);
+            return "";
         }
     }
 
@@ -170,71 +167,43 @@ class MRBWriteSync {
     }
 }
 
-// 使用例
-async function example() {
-    console.log('=== MRBWrite 同期アクセス例 ===');
-    
-    try {
-        // 利用可能なポートを表示
-        await MRBWriteSync.listPortsSync();
-        
-        // シリアルポートに接続
-        const mrb = new MRBWriteSync('/dev/ttyUSB0', 115200);
-        await mrb.connectSync();
-        
-        // 単一コマンドの同期実行
-        console.log('\n--- 単一コマンド実行 ---');
-        const response = await mrb.sendCommandSync('AT\r\n');
-        console.log('応答:', response);
-        
-        // 複数コマンドの同期実行
-        console.log('\n--- 複数コマンド実行 ---');
-        const commands = ['AT\r\n', 'ATI\r\n', 'AT+GMR\r\n'];
-        const results = await mrb.executeCommandsSync(commands);
-        
-        results.forEach((result, index) => {
-            if (result.success) {
-                console.log(`${index + 1}. ${result.command.trim()} → ${result.result}`);
-            } else {
-                console.log(`${index + 1}. ${result.command.trim()} → エラー: ${result.error}`);
-            }
-        });
-        
-        // 切断
-        await mrb.disconnectSync();
-        console.log('\n接続を終了しました');
-        
-    } catch (error) {
-        console.error('エラー:', error.message);
-    }
-}
-
-
-async function mrbwrite_main() {
-    console.log('=== MRBWrite 同期アクセスメイン関数 ===');
-    
+// メイン関数
+// 引数でファイル名を受け取り、mrbバイトコードを送信、実行する
+async function mrbwrite_main( bytecode, port = '/dev/ttyUSB0', baudRate = 19200 ) {
     try {
         
         // シリアルポートに接続
-        const mrb = new MRBWriteSync('/dev/ttyACM0', 19200);
+        const mrb = new MRBWriteSync(port, baudRate);
         await mrb.connectSync();
         
         // RBoardに接続
         do {
-            const response = await mrb.sendCommandSync('\r\n');
-            console.log('応答:', response);
-            if ( response.startsWith('+OK mruby/c') ) break;
+            const response = await mrb.sendCommandSync('\n');
+//            console.log('RBoard接続応答:', response);
+            if( ( await mrb.readSync(5000)).startsWith('+OK mruby/c') ) break;
         } while (true);
 
-        do {
-            const response = await mrb.sendCommandSync('version\r\n');
-            console.log('応答:', response);
-            if ( response.includes('RITE0300') ) break;
-        } while (true);
+        // バージョン確認
+        let  response = await mrb.sendCommandSync('version\r\n');
+//        console.log('バージョン確認:', response);
+        
+        // バイトコード送信
+        response = await mrb.sendCommandSync("write " + bytecode.length + "\r\n");
+//        console.log('witeコマンド:', response);
+        await mrb.writeSync(bytecode);
+        response = await mrb.readSync(1000);
+//        console.log('バイトコード送信完了:', response);
 
+        response2 = await mrb.sendCommandSync('version\r\n');
+//        console.log('バージョン確認:', response2);
+
+        // 実行
+        const runResponse = await mrb.sendCommandSync('execute\r\n');
+//        console.log('実行結果:', runResponse);
+    
         // 切断
         await mrb.disconnectSync();
-        console.log('接続を終了しました');
+//        console.log('接続を終了しました');
         
     } catch (error) {
         console.error('エラー:', error.message);
@@ -243,7 +212,56 @@ async function mrbwrite_main() {
 
 // コマンドライン引数での実行
 if (require.main === module) {
-    mrbwrite_main();
+//    console.log('引数:', process.argv.slice(2));
+    if (process.argv.length < 3) {
+        console.error('使用法: node mrbwrite.js [.rb / .mrb] [-p ポート] [-b ボーレート]');
+        process.exit(1);
+    }
+
+    // コマンドライン引数
+    let port = '/dev/ttyUSB0';
+    let baudRate = 19200;
+    let files = [];
+    for (let i = 2; i < process.argv.length; i++) {
+        if( process.argv[i].startsWith('-p') ){
+            i++;
+            port = process.argv[i];
+            continue;
+        } else if( process.argv[i].startsWith('-b') ){
+            i++;
+            baudRate = parseInt(process.argv[i], 10);
+            continue;
+        }
+        files.push(process.argv[i]);
+    }
+
+    if (files.length === 0) {   
+        console.error('少なくとも1つのファイルを指定してください');
+        process.exit(1);
+    }
+
+    let bytecodes = [];
+    // コンパイルしてバイトコードを生成
+    for (const file of files) {
+        // バイトコードかどうかを判定する
+        // ファイルの先頭文字が 'RITE' かどうかを確認
+        const fs = require('fs');
+        const data = fs.readFileSync(file);
+        if (data.length >= 4 && data.toString('utf8', 0, 4) === 'RITE') {
+            // バイトコードとして扱う
+            bytecodes.push(data);
+        } else {
+        }
+    }
+
+    // バイトコードが複数の場合、結合する
+    if (bytecodes.length > 1) {
+        const combined = Buffer.concat(bytecodes);
+        bytecodes = [combined];
+    }
+
+    // メイン関数を実行
+    mrbwrite_main(bytecodes[0], port, baudRate);
 }
 
 module.exports = MRBWriteSync;
