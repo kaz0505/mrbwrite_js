@@ -251,6 +251,16 @@ if (require.main === module) {
             // バイトコードとして扱う
             bytecodes.push(data);
         } else {
+            // mrbcコンパイルしてバイトコードを生成する
+            const { execSync } = require('child_process');
+            try {
+                const tempFile = fs.mkdtempSync('/tmp/foobar-');
+                const output = execSync(`./mrbc -o ${tempFile}.mrb ${file}`, { encoding: 'buffer' });
+                bytecodes.push(fs.readFileSync(tempFile+".mrb"));
+            } catch (error) {
+                console.error(`ファイル ${file} のコンパイルに失敗しました:`, error.message);
+                process.exit(1);
+            } 
         }
     }
 
