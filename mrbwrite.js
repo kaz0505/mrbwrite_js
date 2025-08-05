@@ -169,7 +169,7 @@ class MRBWriteSync {
 
 // メイン関数
 // 引数でファイル名を受け取り、mrbバイトコードを送信、実行する
-async function mrbwrite_main( bytecode, port = '/dev/ttyUSB0', baudRate = 19200 ) {
+async function mrbwrite_main( bytecodes, port = '/dev/ttyUSB0', baudRate = 19200 ) {
     try {
         
         // シリアルポートに接続
@@ -186,13 +186,19 @@ async function mrbwrite_main( bytecode, port = '/dev/ttyUSB0', baudRate = 19200 
         // バージョン確認
         let  response = await mrb.sendCommandSync('version\r\n');
 //        console.log('バージョン確認:', response);
-        
+
+        // クリアコマンド
+        response = await mrb.sendCommandSync('clear\r\n');
+//        console.log('クリアコマンド:', response);
+
         // バイトコード送信
-        response = await mrb.sendCommandSync("write " + bytecode.length + "\r\n");
-//        console.log('witeコマンド:', response);
-        await mrb.writeSync(bytecode);
-        response = await mrb.readSync(1000);
-//        console.log('バイトコード送信完了:', response);
+        for( const bytecode of bytecodes ) {
+            response = await mrb.sendCommandSync("write " + bytecode.length + "\r\n");
+//            console.log('witeコマンド:', response);
+            await mrb.writeSync(bytecode);
+            response = await mrb.readSync(1000);
+//            console.log('バイトコード送信完了:', response);
+        }
 
         response2 = await mrb.sendCommandSync('version\r\n');
 //        console.log('バージョン確認:', response2);
@@ -246,32 +252,14 @@ if (require.main === module) {
         // バイトコードかどうかを判定する
         // ファイルの先頭文字が 'RITE' かどうかを確認
         const fs = require('fs');
-        const data = fs.readFileSync(file);
-        if (data.length >= 4 && data.toString('utf8', 0, 4) === 'RITE') {
-            // バイトコードとして扱う
+        let data = fs.readFileSync(file);
+        if (data.length >= 4 && data.toString('utf8', 0, 4) == 'RITE') {
             bytecodes.push(data);
-        } else {
-            // mrbcコンパイルしてバイトコードを生成する
-            const { execSync } = require('child_process');
-            try {
-                const tempFile = fs.mkdtempSync('/tmp/foobar-');
-                const output = execSync(`./mrbc -o ${tempFile}.mrb ${file}`, { encoding: 'buffer' });
-                bytecodes.push(fs.readFileSync(tempFile+".mrb"));
-            } catch (error) {
-                console.error(`ファイル ${file} のコンパイルに失敗しました:`, error.message);
-                process.exit(1);
-            } 
         }
     }
 
-    // バイトコードが複数の場合、結合する
-    if (bytecodes.length > 1) {
-        const combined = Buffer.concat(bytecodes);
-        bytecodes = [combined];
-    }
-
     // メイン関数を実行
-    mrbwrite_main(bytecodes[0], port, baudRate);
+    mrbwrite_main(bytecodes, port, baudRate);
 }
 
 module.exports = MRBWriteSync;
